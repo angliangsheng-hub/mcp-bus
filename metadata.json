@@ -1,0 +1,6 @@
+{
+  "name": "SBS Transit NextBus - Public Transport Portal",
+  "description": "Singapore SBS Transit official web portal with NextBus arrival timings, service information, rail network guides, and live LTA arrival estimates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
