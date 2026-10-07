@@ -4,7 +4,8 @@ import {
   BusRoute,
   BusStop,
   BusArrivalResult,
-  getEstimatedArrivals
+  getEstimatedArrivals,
+  fetchLiveLtaArrivals
 } from '../data/transitData';
 import {
   Bus,
@@ -19,7 +20,11 @@ import {
   Navigation,
   ArrowRight,
   Info,
-  CheckCircle2
+  CheckCircle2,
+  Activity,
+  Radio,
+  Server,
+  X
 } from 'lucide-react';
 
 interface NextBusTrackerProps {
@@ -90,23 +95,52 @@ export const NextBusTracker: React.FC<NextBusTrackerProps> = ({
     setSecondsUntilRefresh(30);
   };
 
+  // API Health monitor state
+  const [showApiHealthModal, setShowApiHealthModal] = useState<boolean>(false);
+  const [healthStatus, setHealthStatus] = useState<any>(null);
+  const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
+
   // Estimate button action
-  const handleEstimateArrival = () => {
+  const handleEstimateArrival = async () => {
     setIsRefreshing(true);
-    setTimeout(() => {
-      if (searchMode === 'service') {
-        setArrivalResult(getEstimatedArrivals(selectedServiceNo, selectedStopCode));
+    const targetService = searchMode === 'service' ? selectedServiceNo : undefined;
+    const targetStop = searchMode === 'service' ? selectedStopCode : stopInputCode;
+
+    try {
+      const liveResult = await fetchLiveLtaArrivals(targetStop, targetService);
+      if (liveResult) {
+        setArrivalResult(liveResult);
       } else {
-        // Find which service serves this stop
-        const matchingRoute =
-          BUS_ROUTES.find((r) =>
-            [...r.direction1Stops, ...r.direction2Stops].some((s) => s.code === stopInputCode)
-          ) || BUS_ROUTES[0];
-        setArrivalResult(getEstimatedArrivals(matchingRoute.serviceNo, stopInputCode));
+        if (searchMode === 'service') {
+          setArrivalResult(getEstimatedArrivals(selectedServiceNo, selectedStopCode));
+        } else {
+          const matchingRoute =
+            BUS_ROUTES.find((r) =>
+              [...r.direction1Stops, ...r.direction2Stops].some((s) => s.code === stopInputCode)
+            ) || BUS_ROUTES[0];
+          setArrivalResult(getEstimatedArrivals(matchingRoute.serviceNo, stopInputCode));
+        }
       }
+    } catch {
+      setArrivalResult(getEstimatedArrivals(selectedServiceNo, selectedStopCode));
+    } finally {
       setIsRefreshing(false);
       setSecondsUntilRefresh(30);
-    }, 450);
+    }
+  };
+
+  const checkApiHealth = async () => {
+    setIsCheckingHealth(true);
+    setShowApiHealthModal(true);
+    try {
+      const res = await fetch('/api/health?testLta=true');
+      const data = await res.json();
+      setHealthStatus(data);
+    } catch (err: any) {
+      setHealthStatus({ status: 'error', message: err.message });
+    } finally {
+      setIsCheckingHealth(false);
+    }
   };
 
   // Manual refresh
@@ -135,7 +169,7 @@ export const NextBusTracker: React.FC<NextBusTrackerProps> = ({
     const interval = setInterval(() => {
       setSecondsUntilRefresh((prev) => {
         if (prev <= 1) {
-          setArrivalResult(getEstimatedArrivals(arrivalResult.serviceNo, arrivalResult.stopCode));
+          handleEstimateArrival();
           return 30;
         }
         return prev - 1;
@@ -143,7 +177,7 @@ export const NextBusTracker: React.FC<NextBusTrackerProps> = ({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [autoRefreshEnabled, arrivalResult.serviceNo, arrivalResult.stopCode]);
+  }, [autoRefreshEnabled, searchMode, selectedServiceNo, selectedStopCode, stopInputCode]);
 
   // Load color helpers
   const getLoadBadgeStyle = (load: string) => {
@@ -367,6 +401,7 @@ export const NextBusTracker: React.FC<NextBusTrackerProps> = ({
               <span className="text-xs font-semibold text-slate-500">Popular Stop Codes:</span>
               <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {[
+                  { code: '04121', label: 'High St Ctr / City Hall' },
                   { code: '64009', label: 'Hougang Int' },
                   { code: '17009', label: 'Clementi Int' },
                   { code: '75009', label: 'Tampines Int' },
@@ -430,16 +465,35 @@ export const NextBusTracker: React.FC<NextBusTrackerProps> = ({
           </div>
 
           {/* Right Live indicator & Refresh button */}
-          <div className="flex items-center gap-3 self-start sm:self-auto">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 self-start sm:self-auto">
             {/* LTA Live Feed status */}
-            <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-full text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-              <span>LTA Live Feed</span>
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
+              arrivalResult.isLiveLta
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                : 'bg-slate-100 text-slate-700 border-slate-200'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                arrivalResult.isLiveLta ? 'bg-emerald-500 animate-ping' : 'bg-slate-400'
+              }`} />
+              <span>
+                {arrivalResult.isLiveLta ? `LTA Live DataMall v3 ${arrivalResult.operator ? `(${arrivalResult.operator})` : ''}` : 'LTA Live Feed'}
+              </span>
             </div>
+
+            {/* Test API Endpoint Button */}
+            <button
+              type="button"
+              onClick={checkApiHealth}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold bg-purple-50 text-purple-800 border border-purple-200 hover:bg-purple-100 transition-colors"
+              title="Test /api/health and LTA endpoint connection"
+            >
+              <Activity className="w-3.5 h-3.5 text-purple-700" />
+              <span>API Health</span>
+            </button>
 
             {/* Refresh control */}
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <span>Last refreshed: {arrivalResult.lastUpdated}</span>
+              <span className="hidden sm:inline">Last refreshed: {arrivalResult.lastUpdated}</span>
               <button
                 type="button"
                 onClick={handleManualRefresh}
@@ -508,6 +562,13 @@ export const NextBusTracker: React.FC<NextBusTrackerProps> = ({
                     <Clock className="w-3 h-3 text-slate-400" />
                     <span>Est: {bus.estimatedTimestamp}</span>
                   </div>
+
+                  {bus.latitude && bus.longitude && (
+                    <div className="text-[10px] text-emerald-700 bg-emerald-50/80 rounded px-1.5 py-0.5 mt-2 inline-flex items-center gap-1 font-mono border border-emerald-200/60">
+                      <Radio className="w-3 h-3 text-emerald-600 animate-pulse" />
+                      <span>GPS: {parseFloat(bus.latitude).toFixed(3)}, {parseFloat(bus.longitude).toFixed(3)}</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Bottom: Bus Specifications (Double Deck / WAB) */}
@@ -643,6 +704,64 @@ export const NextBusTracker: React.FC<NextBusTrackerProps> = ({
           </div>
         )}
       </div>
+
+      {/* API Health & Gateway Diagnostics Modal */}
+      {showApiHealthModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+            <div className="bg-[#4a154b] text-white p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Server className="w-5 h-5 text-amber-300" />
+                <h3 className="text-base font-bold text-white">API Health & LTA Gateway Status</h3>
+              </div>
+              <button
+                onClick={() => setShowApiHealthModal(false)}
+                className="p-1 rounded-full text-purple-200 hover:text-white hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <span className="font-semibold text-slate-700">Health Endpoint:</span>
+                <code className="bg-purple-100 text-purple-900 px-2 py-0.5 rounded font-mono">/api/health</code>
+              </div>
+
+              <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <span className="font-semibold text-slate-700">LTA Bus Arrival Endpoint:</span>
+                <code className="bg-purple-100 text-purple-900 px-2 py-0.5 rounded font-mono">/api/bus-arrival</code>
+              </div>
+
+              <div className="p-3 bg-slate-900 text-emerald-400 rounded-lg font-mono text-[11px] overflow-x-auto max-h-56">
+                {isCheckingHealth ? (
+                  <div className="flex items-center gap-2 text-amber-300">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Pinging LTA DataMall v3 Gateway...</span>
+                  </div>
+                ) : (
+                  <pre>{JSON.stringify(healthStatus, null, 2)}</pre>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-slate-500 text-[11px]">
+                  Configured for Vercel Serverless & Node.js
+                </span>
+                <button
+                  type="button"
+                  onClick={checkApiHealth}
+                  disabled={isCheckingHealth}
+                  className="bg-[#e65100] text-white hover:bg-[#d84315] px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isCheckingHealth ? 'animate-spin' : ''}`} />
+                  <span>Re-test Connectivity</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
